@@ -33,9 +33,28 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS watched_accounts (
                 handle TEXT PRIMARY KEY,
                 user_id TEXT,
-                last_fetched_at TEXT
+                last_fetched_at TEXT,
+                source TEXT DEFAULT 'manual'
+            );
+
+            CREATE TABLE IF NOT EXISTS account_groups (
+                name        TEXT PRIMARY KEY,
+                description TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS account_group_members (
+                group_name  TEXT NOT NULL REFERENCES account_groups(name) ON DELETE CASCADE,
+                handle      TEXT NOT NULL REFERENCES watched_accounts(handle) ON DELETE CASCADE,
+                PRIMARY KEY (group_name, handle)
             );
         """)
+    # Migration: add source column if missing (for existing DBs)
+    try:
+        conn.execute("ALTER TABLE watched_accounts ADD COLUMN source TEXT DEFAULT 'manual'")
+        logger.info("Migration: added 'source' column to watched_accounts")
+    except Exception:
+        pass  # Column already exists
+
     logger.info("DB initialized at %s", DB_PATH)
 
 
@@ -105,3 +124,159 @@ def update_last_fetched(handle: str) -> None:
             "UPDATE watched_accounts SET last_fetched_at = ? WHERE handle = ?",
             (datetime.now(timezone.utc).isoformat(), handle),
         )
+
+
+# ── Group tables (added in v0.2) ─────────────────────────────────────────────
+
+def _ensure_group_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS account_groups (
+            name        TEXT PRIMARY KEY,
+            description TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS account_group_members (
+            group_name  TEXT NOT NULL REFERENCES account_groups(name) ON DELETE CASCADE,
+            handle      TEXT NOT NULL REFERENCES watched_accounts(handle) ON DELETE CASCADE,
+            PRIMARY KEY (group_name, handle)
+        );
+    """)
+
+
+def add_watched_account(handle: str, source: str = "manual") -> None:
+    """Add an account to watched_accounts (no-op if already exists)."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO watched_accounts (handle, source) VALUES (?, ?)",
+            (handle, source),
+        )
+
+
+def remove_watched_account(handle: str) -> None:
+    """Remove account and all its group memberships."""
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        conn.execute("DELETE FROM account_group_members WHERE handle = ?", (handle,))
+        conn.execute("DELETE FROM watched_accounts WHERE handle = ?", (handle,))
+
+
+def create_group(name: str, description: str = "") -> None:
+    """Create a group (no-op if already exists)."""
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        conn.execute(
+            "INSERT OR IGNORE INTO account_groups (name, description) VALUES (?, ?)",
+            (name, description),
+        )
+
+
+def assign_to_group(group_name: str, handle: str) -> None:
+    """Add an account to a group. Both must already exist."""
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        conn.execute(
+            "INSERT OR IGNORE INTO account_group_members (group_name, handle) VALUES (?, ?)",
+            (group_name, handle),
+        )
+
+
+def unassign_from_group(group_name: str, handle: str) -> None:
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        conn.execute(
+            "DELETE FROM account_group_members WHERE group_name = ? AND handle = ?",
+            (group_name, handle),
+        )
+
+
+def get_groups() -> list[dict]:
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        rows = conn.execute("SELECT * FROM account_groups ORDER BY name").fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_group_members(group_name: str) -> list[str]:
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        rows = conn.execute(
+            "SELECT handle FROM account_group_members WHERE group_name = ? ORDER BY handle",
+            (group_name,),
+        ).fetchall()
+    return [r["handle"] for r in rows]
+
+
+def sync_from_list(handles: list[str]) -> tuple[int, int]:
+    """Sync watched_accounts from an X List.
+
+    - INSERT new handles with source='list_sync'
+    - DELETE source='list_sync' accounts no longer in the list (tweets are kept)
+    Returns (added, removed) counts.
+    """
+    with get_conn() as conn:
+        existing_list_sync = {
+            r[0] for r in conn.execute(
+                "SELECT handle FROM watched_accounts WHERE source = 'list_sync'"
+            ).fetchall()
+        }
+        handle_set = {h.lower() for h in handles}
+
+        to_add = handle_set - {h.lower() for h in existing_list_sync}
+        to_remove = {h for h in existing_list_sync if h.lower() not in handle_set}
+
+        for h in to_add:
+            conn.execute(
+                "INSERT OR IGNORE INTO watched_accounts (handle, source) VALUES (?, 'list_sync')",
+                (h,),
+            )
+
+        for h in to_remove:
+            conn.execute("DELETE FROM account_group_members WHERE handle = ?", (h,))
+            conn.execute(
+                "DELETE FROM watched_accounts WHERE handle = ? AND source = 'list_sync'",
+                (h,),
+            )
+
+    logger.info("List sync: +%d added, -%d removed", len(to_add), len(to_remove))
+    return len(to_add), len(to_remove)
+
+
+def degrade_old_raw_json(days: int = 90) -> int:
+    """Set raw_json = NULL for tweets fetched more than `days` days ago. Returns count updated.
+
+    Uses fetched_at (ISO 8601) not created_at (Twitter's non-ISO format).
+    """
+    if days <= 0:
+        return 0
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE tweets
+               SET raw_json = NULL
+             WHERE raw_json IS NOT NULL
+               AND fetched_at < datetime('now', ? || ' days')
+            """,
+            (f"-{days}",),
+        )
+    return cur.rowcount
+
+
+def get_tweets_by_group(
+    group_name: str,
+    since_hours: int = 24,
+    original_only: bool = True,
+) -> list[dict]:
+    """Return tweets from all accounts in a group, newest first."""
+    query = """
+        SELECT t.*
+        FROM tweets t
+        JOIN account_group_members m ON t.author_handle = m.handle
+        WHERE m.group_name = ?
+          AND t.created_at >= datetime('now', ? || ' hours')
+          {}
+        ORDER BY t.id DESC
+    """.format("AND t.is_retweet = 0" if original_only else "")
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        rows = conn.execute(query, (group_name, f"-{since_hours}")).fetchall()
+    return [dict(r) for r in rows]

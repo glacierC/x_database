@@ -3,9 +3,9 @@ import logging
 import os
 from pathlib import Path
 
-from src.config import DB_PATH, WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES
+from src.config import DB_PATH, WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES, X_LIST_ID
 from src.db import init_db, upsert_watched_account
-from src.scheduler import build_scheduler, fetch_all_accounts
+from src.scheduler import build_scheduler, fetch_all_accounts, sync_watched_list
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,12 +22,17 @@ async def main() -> None:
     logger.info("Watched accounts: %s", WATCHED_ACCOUNTS)
     logger.info("Poll interval: %d minutes", POLL_INTERVAL_MINUTES)
     logger.info("DB path: %s", DB_PATH)
+    if X_LIST_ID:
+        logger.info("X List sync enabled: list_id=%s", X_LIST_ID)
 
     init_db()
 
     # Seed watched_accounts table from config
     for handle in WATCHED_ACCOUNTS:
         upsert_watched_account(handle)
+
+    # Sync from X List on startup (if configured)
+    await sync_watched_list()
 
     # Run immediately on startup, then on schedule
     await fetch_all_accounts()

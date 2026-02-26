@@ -5,14 +5,18 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src import db
-from src.x_api import get_user_id, get_user_tweets
-from src.config import WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES
+from src.x_api import get_user_id, get_user_tweets, get_list_members
+from src.auth import refresh_session
+from src.config import WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES, RAW_JSON_RETENTION_DAYS, X_LIST_ID
+from src.health import FailureTracker, send_telegram_alert
 
 logger = logging.getLogger(__name__)
 
+_tracker = FailureTracker()
 
-async def fetch_account(handle: str) -> None:
-    """Fetch new tweets for a single account and persist them."""
+
+async def fetch_account(handle: str) -> bool:
+    """Fetch new tweets for a single account. Returns True on success."""
     try:
         row = next((a for a in db.get_watched_accounts() if a["handle"] == handle), None)
         user_id = row["user_id"] if row and row["user_id"] else None
@@ -26,15 +30,78 @@ async def fetch_account(handle: str) -> None:
         new_count = db.insert_tweets(tweets)
         db.update_last_fetched(handle)
         logger.info("@%s: %d new tweets saved (total fetched: %d)", handle, new_count, len(tweets))
+        return True
     except Exception as e:
         logger.error("Error fetching @%s: %s", handle, e, exc_info=True)
+        return False
 
 
 async def fetch_all_accounts() -> None:
     logger.info("=== Poll cycle start ===")
-    for handle in WATCHED_ACCOUNTS:
-        await fetch_account(handle)
+
+    accounts = db.get_watched_accounts()
+    handles = [a["handle"] for a in accounts] if accounts else WATCHED_ACCOUNTS
+
+    failed: list[str] = []
+    for handle in handles:
+        ok = await fetch_account(handle)
+        if not ok:
+            failed.append(handle)
+
+    if failed:
+        fail_count = _tracker.record_failure()
+        logger.warning("Poll cycle: %d/%d accounts failed (consecutive cycles: %d). Failed: %s",
+                       len(failed), len(handles), fail_count, failed)
+
+        # First failure → proactive session refresh
+        if fail_count == 1:
+            logger.info("Triggering proactive session refresh...")
+            try:
+                await refresh_session()
+                logger.info("Proactive refresh done.")
+            except Exception as e:
+                logger.error("Proactive refresh failed: %s", e)
+
+        # Alert threshold reached → send Telegram
+        if _tracker.should_alert():
+            msg = (
+                f"🚨 <b>x_database alert</b>\n"
+                f"連続 {fail_count} cycle 抓取失敗\n"
+                f"最新失敗帳號: {', '.join(f'@{h}' for h in failed)}\n"
+                f"請檢查 session / cookies 狀態。"
+            )
+            await send_telegram_alert(msg)
+            _tracker.reset()
+    else:
+        _tracker.record_success()
+
     logger.info("=== Poll cycle done ===")
+
+
+async def sync_watched_list() -> None:
+    """Sync watched_accounts from the configured X List (X_LIST_ID).
+
+    Skipped silently if X_LIST_ID is not set.
+    """
+    if not X_LIST_ID:
+        return
+    logger.info("List sync: fetching members for list_id=%s", X_LIST_ID)
+    try:
+        handles = await get_list_members(X_LIST_ID)
+        added, removed = db.sync_from_list(handles)
+        logger.info("List sync done: +%d added, -%d removed", added, removed)
+    except Exception as e:
+        logger.error("List sync failed: %s", e, exc_info=True)
+
+
+async def run_maintenance() -> None:
+    """Daily job: degrade raw_json for tweets older than RAW_JSON_RETENTION_DAYS."""
+    if RAW_JSON_RETENTION_DAYS <= 0:
+        return
+    count = db.degrade_old_raw_json(RAW_JSON_RETENTION_DAYS)
+    if count:
+        logger.info("Maintenance: cleared raw_json for %d tweets older than %d days.",
+                    count, RAW_JSON_RETENTION_DAYS)
 
 
 def build_scheduler() -> AsyncIOScheduler:
@@ -44,5 +111,24 @@ def build_scheduler() -> AsyncIOScheduler:
         trigger=IntervalTrigger(minutes=POLL_INTERVAL_MINUTES),
         id="fetch_all",
         replace_existing=True,
+        max_instances=1,   # 同一时间只允许 1 个实例跑，防止 cycle 重叠
+        coalesce=True,     # 积压触发时只跑一次，不补跑
     )
+    scheduler.add_job(
+        run_maintenance,
+        trigger="cron",
+        hour=3,
+        minute=0,
+        id="daily_maintenance",
+        replace_existing=True,
+    )
+    if X_LIST_ID:
+        scheduler.add_job(
+            sync_watched_list,
+            trigger="cron",
+            hour=0,
+            minute=5,
+            id="daily_list_sync",
+            replace_existing=True,
+        )
     return scheduler

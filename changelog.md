@@ -1,6 +1,68 @@
 # Changelog
 # Last Updated: 2026-02-26
 
+## [0.6.0] - 2026-02-26
+
+### Added
+- `watched_accounts` 表新增 `source TEXT DEFAULT 'manual'` 列（含 ALTER TABLE migration，支持已有 DB 升级）
+- `src/db.py`：`sync_from_list(handles)` — 从 X List 同步账号，自动 add/remove `source='list_sync'` 账号
+- `src/x_api.py`：`get_list_members(list_id)` — 读取 X List 成员（GraphQL ListMembers，分页）
+- `src/config.py`：`X_LIST_ID`（留空则跳过 List 同步）
+- `src/scheduler.py`：`sync_watched_list()` + 每日 00:05 cron job（仅 X_LIST_ID 非空时注册）
+- `main.py`：启动时调用 `sync_watched_list()`
+- `cli.py`：`account list` 输出新增 `source` 列
+- `.env.example`：新增 `X_LIST_ID=` 配置示例
+- `docs/features/account-sync/overview.md` + `test-guide.md`
+
+### Notes
+- `QUERY_ID_LIST_MEMBERS` 需用户自行抓包填写（见 docs/features/account-sync/overview.md）
+
+---
+
+## [0.5.0] - 2026-02-26
+
+### Changed
+- `src/scheduler.py`：`fetch_all` job 新增 `max_instances=1`（防 cycle 重叠）和 `coalesce=True`（积压触发只跑一次）
+- `.env.example`：`POLL_INTERVAL_MINUTES` 默认值从 30 改为 60（适配 100+ 账号串行采集场景）
+
+### Added
+- `docs/features/scheduler/overview.md`：scheduler 功能说明，含防重叠机制描述
+- `docs/features/scheduler/test-guide.md`：防重叠验证步骤
+- `stories/S0010-scheduler-stability.md`
+
+---
+
+## [0.4.0] - 2026-02-26
+
+### Added
+- `src/db.py`：`degrade_old_raw_json(days)` — 将超过 N 天的推文 `raw_json` 置 NULL，结构化字段永久保留
+- `src/scheduler.py`：每日凌晨 3 点维护 job (`run_maintenance`)，自动触发 raw_json 降级
+- `src/config.py`：`RAW_JSON_RETENTION_DAYS`（默认 90 天）
+- `.env.example`：新增 `RAW_JSON_RETENTION_DAYS` 配置项
+- `DATABASE.md`：面向下游 agent/项目的 DB 结构参考文档（表结构、关系图、Python 调用接口、生命周期说明）
+
+---
+
+## [0.3.0] - 2026-02-26
+
+### Added
+- `src/health.py`：`FailureTracker` 类 + `send_telegram_alert()`
+- `src/scheduler.py`：集成健康检测，fetch_account 返回 bool；第 1 次 cycle 失败自动 refresh session；连续 3 次失败发 Telegram 告警后计数归零
+- `src/config.py`：新增 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `HEALTH_ALERT_THRESHOLD`
+- `.env.example`：新增 Telegram 配置示例
+
+---
+
+## [0.2.0] - 2026-02-26
+
+### Added
+- `account_groups` 和 `account_group_members` 表（多对多，幂等建表）
+- `cli.py`：命令行工具，支持 `account add/remove/list` 和 `group create/assign/unassign/list/show/delete`
+- `src/db.py` 新增函数：`add_watched_account`, `remove_watched_account`, `create_group`, `assign_to_group`, `unassign_from_group`, `get_groups`, `get_group_members`, `get_tweets_by_group`
+- `get_tweets_by_group(group_name, since_hours, original_only)` 下游查询接口
+
+---
+
 ## [0.1.0] - 2026-02-26
 
 ### Added
