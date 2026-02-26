@@ -1,0 +1,58 @@
+# x_scraper Roadmap
+# Last Updated: 2026-02-26
+
+## 项目定位
+X 推文定时采集服务。作为独立数据源，供下游分析项目（如每日信息摘要、市场事件追踪）直接查询 SQLite DB，无需重复爬取。
+
+不负责分析，不负责展示，只负责**把指定账号的高质量推文持续、可靠地存进来**。
+
+---
+
+## 当前版本：v0.1（基础采集）
+
+### ✅ 已完成
+
+| Story | 描述 | 完成时间 |
+|-------|------|---------|
+| S0001 | 核心采集：Playwright cookie 管理 + X GraphQL API + SQLite 存储 + APScheduler 30min 轮询 | 2026-02-26 |
+
+---
+
+## v0.2：采集稳定性（下一步）
+
+目标：让 scraper 能长期无人值守跑在 home-mac VPS 上，session 失效时自己恢复或报警。
+
+| Story | 描述 | 状态 |
+|-------|------|------|
+| S0002 | Session 健康检测：抓取失败时自动触发 Playwright refresh，连续失败 3 次发 Telegram 通知 | Todo |
+| S0003 | 部署到 home-mac VPS：docker compose + volume 挂载，scp cookies 迁移 | Todo |
+
+---
+
+## v0.3：数据质量提升
+
+目标：让存入 DB 的数据更完整，方便下游消费。
+
+| Story | 描述 | 状态 |
+|-------|------|------|
+| S0004 | Quote tweet 展开：存储被引用原推的全文（现在只存了引用者的文本） | Todo |
+| S0005 | 媒体附件记录：图片/视频 URL 存入 media 表 | Todo |
+| S0006 | 账号管理 CLI：命令行 add/remove watched accounts，不用手改 .env | Todo |
+
+---
+
+## v1.0：对外查询接口（数据消费层，后续再做）
+
+目标：给下游项目提供简洁的 Python 接口，屏蔽 SQL 细节。
+
+| Story | 描述 | 状态 |
+|-------|------|------|
+| S0007 | 查询模块：`get_tweets(handle, since, original_only)` 等常用接口 | Todo |
+| S0008 | 每日摘要导出：按时间窗口导出指定账号的原创推文为 JSON，供分析项目消费 | Todo |
+
+---
+
+## 不在本项目范围内
+- 推文分析、摘要生成 → 由独立分析项目实现
+- 前端展示 → 不做
+- 多用户支持 → 不做

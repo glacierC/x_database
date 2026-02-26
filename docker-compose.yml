@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    volumes:
+      - ./data:/app/data
+      - ./cookies:/app/cookies
+    env_file: .env
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    restart: unless-stopped
