@@ -4,6 +4,7 @@ FROM python:3.11-slim
 # Note: ttf-unifont/ttf-ubuntu-font-family renamed in Debian Trixie → fonts-unifont/fonts-ubuntu
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
+        procps \
         fonts-unifont \
         fonts-liberation \
         libasound2t64 \
