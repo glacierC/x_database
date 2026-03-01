@@ -26,6 +26,9 @@ def init_db() -> None:
                 like_count INTEGER DEFAULT 0,
                 reply_count INTEGER DEFAULT 0,
                 is_retweet INTEGER DEFAULT 0,
+                quoted_tweet_id TEXT,
+                quoted_full_text TEXT,
+                quoted_author_handle TEXT,
                 raw_json TEXT,
                 fetched_at TEXT NOT NULL
             );
@@ -47,6 +50,14 @@ def init_db() -> None:
                 handle      TEXT NOT NULL REFERENCES watched_accounts(handle) ON DELETE CASCADE,
                 PRIMARY KEY (group_name, handle)
             );
+
+            CREATE TABLE IF NOT EXISTS media (
+                id          TEXT PRIMARY KEY,
+                tweet_id    TEXT NOT NULL,
+                media_type  TEXT,
+                url         TEXT,
+                video_url   TEXT
+            );
         """)
     # Migration: add source column if missing (for existing DBs)
     try:
@@ -54,6 +65,17 @@ def init_db() -> None:
         logger.info("Migration: added 'source' column to watched_accounts")
     except Exception:
         pass  # Column already exists
+    # Migration: add quote tweet columns (S0004)
+    for col_sql, col_name in [
+        ("ALTER TABLE tweets ADD COLUMN quoted_tweet_id TEXT", "quoted_tweet_id"),
+        ("ALTER TABLE tweets ADD COLUMN quoted_full_text TEXT", "quoted_full_text"),
+        ("ALTER TABLE tweets ADD COLUMN quoted_author_handle TEXT", "quoted_author_handle"),
+    ]:
+        try:
+            conn.execute(col_sql)
+            logger.info("Migration: added '%s' column to tweets", col_name)
+        except Exception:
+            pass  # Column already exists
 
     logger.info("DB initialized at %s", DB_PATH)
 
@@ -86,6 +108,20 @@ def get_latest_tweet_id(handle: str) -> str | None:
     return row["id"] if row else None
 
 
+def insert_media(media_items: list[dict]) -> None:
+    """Batch-insert media records, skip duplicates."""
+    if not media_items:
+        return
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO media (id, tweet_id, media_type, url, video_url)
+            VALUES (:id, :tweet_id, :media_type, :url, :video_url)
+            """,
+            media_items,
+        )
+
+
 def insert_tweets(tweets: list[dict]) -> int:
     """Insert tweets, skip duplicates. Returns count of newly inserted rows."""
     if not tweets:
@@ -97,8 +133,10 @@ def insert_tweets(tweets: list[dict]) -> int:
                 """
                 INSERT OR IGNORE INTO tweets
                     (id, author_id, author_handle, full_text, created_at,
-                     retweet_count, like_count, reply_count, is_retweet, raw_json, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     retweet_count, like_count, reply_count, is_retweet,
+                     quoted_tweet_id, quoted_full_text, quoted_author_handle,
+                     raw_json, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     t["id"],
@@ -110,11 +148,22 @@ def insert_tweets(tweets: list[dict]) -> int:
                     t.get("like_count", 0),
                     t.get("reply_count", 0),
                     t.get("is_retweet", 0),
+                    t.get("quoted_tweet_id"),
+                    t.get("quoted_full_text"),
+                    t.get("quoted_author_handle"),
                     t["raw_json"],
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
             inserted += cur.rowcount
+            if cur.rowcount and t.get("media_items"):
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO media (id, tweet_id, media_type, url, video_url)
+                    VALUES (:id, :tweet_id, :media_type, :url, :video_url)
+                    """,
+                    t["media_items"],
+                )
     return inserted
 
 
@@ -279,4 +328,132 @@ def get_tweets_by_group(
     with get_conn() as conn:
         _ensure_group_tables(conn)
         rows = conn.execute(query, (group_name, f"-{since_hours}")).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Extended query interfaces (added in S0007) ────────────────────────────────
+
+def get_tweets(
+    handle: str,
+    since_hours: int = 24,
+    original_only: bool = True,
+) -> list[dict]:
+    """Return tweets for a single account, newest first."""
+    original_filter = "AND t.is_retweet = 0" if original_only else ""
+    query = f"""
+        SELECT t.*
+        FROM tweets t
+        WHERE t.author_handle = ?
+          AND t.fetched_at >= datetime('now', ? || ' hours')
+          {original_filter}
+        ORDER BY t.id DESC
+    """
+    with get_conn() as conn:
+        rows = conn.execute(query, (handle, f"-{since_hours}")).fetchall()
+    return [dict(r) for r in rows]
+
+
+def search_tweets(
+    query: str,
+    group_name: str | None = None,
+    since_hours: int = 24,
+    original_only: bool = True,
+) -> list[dict]:
+    """Full-text keyword search. Optionally scoped to a group."""
+    like = f"%{query}%"
+    original_filter = "AND t.is_retweet = 0" if original_only else ""
+    if group_name is not None:
+        sql = f"""
+            SELECT t.*
+            FROM tweets t
+            JOIN account_group_members gm ON t.author_handle = gm.handle
+            WHERE gm.group_name = ?
+              AND (t.full_text LIKE ? OR t.quoted_full_text LIKE ?)
+              AND t.fetched_at >= datetime('now', ? || ' hours')
+              {original_filter}
+            ORDER BY t.id DESC
+        """
+        params = (group_name, like, like, f"-{since_hours}")
+    else:
+        sql = f"""
+            SELECT t.*
+            FROM tweets t
+            WHERE (t.full_text LIKE ? OR t.quoted_full_text LIKE ?)
+              AND t.fetched_at >= datetime('now', ? || ' hours')
+              {original_filter}
+            ORDER BY t.id DESC
+        """
+        params = (like, like, f"-{since_hours}")
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_tweets_with_media(
+    group_name: str,
+    since_hours: int = 24,
+) -> list[dict]:
+    """Return tweets that have at least one media attachment."""
+    sql = """
+        SELECT DISTINCT t.*
+        FROM tweets t
+        JOIN account_group_members gm ON t.author_handle = gm.handle
+        JOIN media m ON m.tweet_id = t.id
+        WHERE gm.group_name = ?
+          AND t.fetched_at >= datetime('now', ? || ' hours')
+        ORDER BY t.id DESC
+    """
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        rows = conn.execute(sql, (group_name, f"-{since_hours}")).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_quote_tweets(
+    group_name: str,
+    since_hours: int = 24,
+) -> list[dict]:
+    """Return quote tweets (those that reference another tweet)."""
+    sql = """
+        SELECT t.*
+        FROM tweets t
+        JOIN account_group_members gm ON t.author_handle = gm.handle
+        WHERE gm.group_name = ?
+          AND t.fetched_at >= datetime('now', ? || ' hours')
+          AND t.quoted_tweet_id IS NOT NULL
+        ORDER BY t.id DESC
+    """
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        rows = conn.execute(sql, (group_name, f"-{since_hours}")).fetchall()
+    return [dict(r) for r in rows]
+
+
+_VALID_METRICS = {"like_count", "retweet_count", "reply_count"}
+
+
+def get_top_tweets(
+    group_name: str,
+    since_hours: int = 24,
+    limit: int = 10,
+    metric: str = "like_count",
+    original_only: bool = True,
+) -> list[dict]:
+    """Return top N tweets by engagement metric (like_count / retweet_count / reply_count)."""
+    if metric not in _VALID_METRICS:
+        metric = "like_count"
+    original_filter = "AND t.is_retweet = 0" if original_only else ""
+    sql = f"""
+        SELECT t.*
+        FROM tweets t
+        JOIN account_group_members gm ON t.author_handle = gm.handle
+        WHERE gm.group_name = ?
+          AND t.fetched_at >= datetime('now', ? || ' hours')
+          {original_filter}
+        ORDER BY t.{metric} DESC
+        LIMIT ?
+    """
+    with get_conn() as conn:
+        _ensure_group_tables(conn)
+        rows = conn.execute(sql, (group_name, f"-{since_hours}", limit)).fetchall()
     return [dict(r) for r in rows]

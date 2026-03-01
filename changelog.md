@@ -1,5 +1,42 @@
 # Changelog
-# Last Updated: 2026-02-26
+# Last Updated: 2026-03-01
+
+## [0.9.0] - 2026-03-01
+
+### Added (S0007 — 查询模块)
+- `src/db.py`：新增 5 个查询函数
+  - `get_tweets(handle, since_hours, original_only)` — 按单账号查询
+  - `search_tweets(query, group_name, since_hours, original_only)` — 关键词全文搜索（支持可选 group 范围限定）
+  - `get_tweets_with_media(group_name, since_hours)` — 含媒体推文（JOIN media 表）
+  - `get_quote_tweets(group_name, since_hours)` — Quote tweets（`quoted_tweet_id IS NOT NULL`）
+  - `get_top_tweets(group_name, since_hours, limit, metric, original_only)` — Top N，metric 白名单防 SQL 注入
+- 所有新接口使用 `fetched_at` 做时间过滤（ISO 8601，SQLite datetime 兼容）
+
+### Added (S0008 — 每日导出)
+- 新建 `src/exporter.py`
+  - `export_group_to_json(group_name, since_hours, original_only)` — 单 group 导出，LEFT JOIN media + GROUP_CONCAT 聚合 URL
+  - `export_all_groups(since_hours, output_dir)` — 导出所有 group 到 `data/exports/YYYY-MM-DD/<group>.json`
+- `src/scheduler.py`：注册 `daily_export` cron job（每日 06:00，`max_instances=1` + `coalesce=True`）
+- `DATABASE.md`：更新 Python 调用接口章节，新增 S0007/S0008 使用示例
+
+---
+
+## [0.7.0] - 2026-03-01
+
+### Added (S0004 — Quote Tweet 展开)
+- `tweets` 表新增 3 列：`quoted_tweet_id`, `quoted_full_text`, `quoted_author_handle`
+- `src/db.py`：`init_db()` 新增 ALTER TABLE migration（兼容已有 DB）
+- `src/db.py`：`insert_tweets()` INSERT 语句包含新列
+- `src/x_api.py`：`_parse_tweet()` 从 `quoted_status_result.result` 提取被引用推文数据
+
+### Added (S0005 — 媒体附件记录)
+- 新建 `media` 表（`id`, `tweet_id`, `media_type`, `url`, `video_url`）
+- `src/db.py`：`insert_media(media_items)` 批量插入函数
+- `src/db.py`：`insert_tweets()` 在同一事务内联插入 media 记录
+- `src/x_api.py`：`_parse_tweet()` 从 `extended_entities.media[]` 提取媒体附件，视频取最高码率 mp4
+- `DATABASE.md`：更新 tweets 表说明，新增 media 表说明及关系图
+
+---
 
 ## [0.6.0] - 2026-02-26
 

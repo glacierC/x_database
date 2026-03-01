@@ -9,6 +9,7 @@ from src.x_api import get_user_id, get_user_tweets, get_list_members
 from src.auth import refresh_session
 from src.config import WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES, RAW_JSON_RETENTION_DAYS, X_LIST_ID
 from src.health import FailureTracker, send_telegram_alert
+from src.exporter import export_all_groups
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,15 @@ async def run_maintenance() -> None:
                     count, RAW_JSON_RETENTION_DAYS)
 
 
+async def run_daily_export() -> None:
+    """Daily job: export all groups to JSON for downstream consumption."""
+    try:
+        result = export_all_groups(since_hours=24)
+        logger.info("Daily export done: %d groups exported. %s", len(result), result)
+    except Exception as e:
+        logger.error("Daily export failed: %s", e, exc_info=True)
+
+
 def build_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
@@ -121,6 +131,16 @@ def build_scheduler() -> AsyncIOScheduler:
         minute=0,
         id="daily_maintenance",
         replace_existing=True,
+    )
+    scheduler.add_job(
+        run_daily_export,
+        trigger="cron",
+        hour=6,
+        minute=0,
+        id="daily_export",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     if X_LIST_ID:
         scheduler.add_job(
