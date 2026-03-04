@@ -8,14 +8,11 @@
 """
 
 import json
+import sqlite3
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
 
-from dotenv import load_dotenv
-load_dotenv()
-
-from src.db import get_conn, init_db
+DB_PATH = os.getenv("DB_PATH", "data/tweets.db")
 
 # ── YES 账号数据（由 x_discovery 导出）────────────────────────────────────────
 YES_ACCOUNTS = [
@@ -156,8 +153,26 @@ GROUP_DESCRIPTIONS = {
 
 
 def run():
-    init_db()
-    conn = get_conn()
+    conn = sqlite3.connect(DB_PATH)
+
+    # 幂等建表（对已有 DB 无影响）
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS watched_accounts (
+            handle TEXT PRIMARY KEY,
+            user_id TEXT,
+            last_fetched_at TEXT,
+            source TEXT DEFAULT 'manual'
+        );
+        CREATE TABLE IF NOT EXISTS account_groups (
+            name TEXT PRIMARY KEY,
+            description TEXT
+        );
+        CREATE TABLE IF NOT EXISTS account_group_members (
+            group_name TEXT NOT NULL,
+            handle TEXT NOT NULL,
+            PRIMARY KEY (group_name, handle)
+        );
+    """)
 
     # 创建 groups
     for name, desc in GROUP_DESCRIPTIONS.items():
@@ -190,8 +205,7 @@ def run():
 
     conn.commit()
     conn.close()
-
-    print(f"✅ 导入完成")
+    print("✅ 导入完成")
     print(f"   新增账号：{added} 个")
     print(f"   已存在跳过：{skipped} 个")
     print(f"   分配 group 关系：{assigned} 条")
