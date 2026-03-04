@@ -7,6 +7,10 @@ WATCHED_ACCOUNTS: list[str] = [
     a.strip() for a in os.getenv("WATCHED_ACCOUNTS", "").split(",") if a.strip()
 ]
 POLL_INTERVAL_MINUTES: int = int(os.getenv("POLL_INTERVAL_MINUTES", "30"))
+# Seconds to sleep between accounts in a fetch cycle (prevents rate limiting)
+FETCH_DELAY_SECONDS: int = int(os.getenv("FETCH_DELAY_SECONDS", "5"))
+# Max pages to fetch on first run (no since_id); subsequent runs stop at since_id anyway
+INITIAL_MAX_PAGES: int = int(os.getenv("INITIAL_MAX_PAGES", "3"))
 COOKIES_PATH: str = os.getenv("COOKIES_PATH", "./cookies/cookies.json")
 DB_PATH: str = os.getenv("DB_PATH", "./data/tweets.db")
 

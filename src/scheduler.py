@@ -7,7 +7,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from src import db
 from src.x_api import get_user_id, get_user_tweets, get_list_members
 from src.auth import refresh_session
-from src.config import WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES, RAW_JSON_RETENTION_DAYS, X_LIST_ID
+from src.config import WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES, RAW_JSON_RETENTION_DAYS, X_LIST_ID, FETCH_DELAY_SECONDS
 from src.health import FailureTracker, send_telegram_alert
 from src.exporter import export_all_groups
 
@@ -44,10 +44,12 @@ async def fetch_all_accounts() -> None:
     handles = [a["handle"] for a in accounts] if accounts else WATCHED_ACCOUNTS
 
     failed: list[str] = []
-    for handle in handles:
+    for i, handle in enumerate(handles):
         ok = await fetch_account(handle)
         if not ok:
             failed.append(handle)
+        if i < len(handles) - 1:
+            await asyncio.sleep(FETCH_DELAY_SECONDS)
 
     if failed:
         fail_count = _tracker.record_failure()

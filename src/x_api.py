@@ -1,11 +1,13 @@
+import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
 
 from src.auth import get_tokens, refresh_session
-from src.config import BEARER_TOKEN
+from src.config import BEARER_TOKEN, INITIAL_MAX_PAGES
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,16 @@ async def _api_get(url: str, params: dict, retry: bool = True) -> dict:
         await refresh_session()
         return await _api_get(url, params, retry=False)
 
+    if resp.status_code == 429 and retry:
+        reset_ts = resp.headers.get("x-rate-limit-reset")
+        if reset_ts:
+            wait = max(10, int(reset_ts) - int(time.time()) + 10)
+        else:
+            wait = 60
+        logger.warning("429 rate limited. Sleeping %ds before retry...", wait)
+        await asyncio.sleep(wait)
+        return await _api_get(url, params, retry=False)
+
     if resp.status_code != 200:
         raise RuntimeError(f"X API error {resp.status_code}: {resp.text[:300]}")
 
@@ -232,6 +244,33 @@ def _parse_tweet(result: dict, author_handle: str) -> dict | None:
         reply_count = legacy.get("reply_count", 0)
         is_retweet = 1 if full_text.startswith("RT @") else 0
 
+        # Quote tweet (S0004)
+        quoted = result.get("quoted_status_result", {}).get("result", {})
+        quoted_tweet_id = quoted.get("rest_id") if quoted else None
+        quoted_full_text = quoted.get("legacy", {}).get("full_text") if quoted else None
+        quoted_author_handle = (
+            quoted.get("core", {}).get("user_results", {})
+            .get("result", {}).get("legacy", {}).get("screen_name")
+        ) if quoted else None
+
+        # Media attachments (S0005)
+        ext = legacy.get("extended_entities") or legacy.get("entities") or {}
+        media_items = []
+        for m in ext.get("media", []):
+            video_url = None
+            if m.get("type") in ("video", "animated_gif"):
+                variants = m.get("video_info", {}).get("variants", [])
+                mp4s = [v for v in variants if v.get("content_type") == "video/mp4"]
+                if mp4s:
+                    video_url = max(mp4s, key=lambda v: v.get("bitrate", 0)).get("url")
+            media_items.append({
+                "id": m.get("id_str", ""),
+                "tweet_id": tweet_id,
+                "media_type": m.get("type"),
+                "url": m.get("media_url_https"),
+                "video_url": video_url,
+            })
+
         return {
             "id": tweet_id,
             "author_id": author_id,
@@ -242,6 +281,10 @@ def _parse_tweet(result: dict, author_handle: str) -> dict | None:
             "like_count": like_count,
             "reply_count": reply_count,
             "is_retweet": is_retweet,
+            "quoted_tweet_id": quoted_tweet_id,
+            "quoted_full_text": quoted_full_text,
+            "quoted_author_handle": quoted_author_handle,
+            "media_items": media_items,
             "raw_json": json.dumps(result),
         }
     except Exception as e:
@@ -262,8 +305,10 @@ async def get_user_tweets(
     url = f"https://x.com/i/api/graphql/{QUERY_ID_USER_TWEETS}/UserTweets"
     tweets: list[dict] = []
     cursor: str | None = None
+    # Cap pages on initial fetch (no since_id) to avoid exhausting rate limit budget
+    effective_max_pages = max_pages if since_id else min(max_pages, INITIAL_MAX_PAGES)
 
-    for page in range(max_pages):
+    for page in range(effective_max_pages):
         variables: dict[str, Any] = {
             "userId": user_id,
             "count": 40,
@@ -334,7 +379,7 @@ async def get_user_tweets(
             break
 
         cursor = next_cursor
-        logger.debug("Fetched page %d for @%s, cursor=%s…", page + 1, handle, cursor[:20])
+        logger.debug("Fetched page %d/%d for @%s, cursor=%s…", page + 1, effective_max_pages, handle, cursor[:20])
 
     logger.info("Fetched %d tweets for @%s", len(tweets), handle)
     return tweets
