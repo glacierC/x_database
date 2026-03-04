@@ -1,5 +1,5 @@
 # x_scraper Roadmap
-# Last Updated: 2026-03-01 (S0007 + S0008 完成，v1.0 查询接口层 Done)
+# Last Updated: 2026-03-03 (S0003 完成，VPS 部署 Done)
 
 ## 项目定位
 X 推文定时采集服务。作为独立数据源，供下游分析项目（如每日信息摘要、市场事件追踪）直接查询 SQLite DB，无需重复爬取。
@@ -25,13 +25,25 @@ X 推文定时采集服务。作为独立数据源，供下游分析项目（如
 
 ---
 
-## 当前：v0.5 采集稳定性（1 项待做）
-
-目标：让 scraper 能长期无人值守跑，100+ 账号不重叠，session 失效自恢复。
+## ✅ v0.5 采集稳定性（已全部完成）
 
 | Story | 描述 | 状态 |
 |-------|------|------|
-| S0003 | 部署到 home-mac VPS：docker compose + volume 挂载，scp cookies 迁移 | Todo |
+| S0003 | 部署到 home-mac VPS：docker compose + volume 挂载，scp cookies 迁移 | ✅ Done (2026-03-03) |
+
+---
+
+## ✅ v1.1 信息源批量导入（已完成）
+
+| Story | 描述 | 状态 |
+|-------|------|------|
+| S0012 | 从 x_discovery 导入 YES 账号：112 个高质量信息源，按 ai_tech/macro/equities/geopolitics 分组 | ✅ Done (2026-03-04) |
+
+---
+
+## 当前：无待办
+
+> v1.1 上线，监听账号 112 个（x_discovery 评估 YES）+ 已有账号，持续运行中。
 
 ---
 
