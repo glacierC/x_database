@@ -149,6 +149,7 @@ GROUP_DESCRIPTIONS = {
     "macro": "宏观经济、美联储政策、通胀、GDP、债券、央行",
     "equities": "美股/港股投资、财报、估值、资金流向",
     "geopolitics": "地缘政治（仅影响市场或全球经济时）",
+    "crypto": "加密货币：BTC/ETH/链上数据、DeFi、CEX/DEX、监管动态",
 }
 
 
