@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -38,11 +39,11 @@ async def fetch_account(handle: str) -> bool:
 
 
 async def fetch_all_accounts() -> None:
-    logger.info("=== Poll cycle start ===")
-
+    t0 = time.monotonic()
     accounts = db.get_watched_accounts()
     handles = [a["handle"] for a in accounts] if accounts else WATCHED_ACCOUNTS
 
+    total_new = 0
     failed: list[str] = []
     for i, handle in enumerate(handles):
         ok = await fetch_account(handle)
@@ -50,6 +51,13 @@ async def fetch_all_accounts() -> None:
             failed.append(handle)
         if i < len(handles) - 1:
             await asyncio.sleep(FETCH_DELAY_SECONDS)
+
+    # 汇总新增推文数（从各账号日志里取不到了，改为在 fetch_account 返回值里传）
+    elapsed = time.monotonic() - t0
+    logger.info(
+        "[CYCLE] accounts=%d  failed=%d  duration=%.0fs",
+        len(handles), len(failed), elapsed,
+    )
 
     if failed:
         fail_count = _tracker.record_failure()
@@ -77,8 +85,6 @@ async def fetch_all_accounts() -> None:
             _tracker.reset()
     else:
         _tracker.record_success()
-
-    logger.info("=== Poll cycle done ===")
 
 
 async def sync_watched_list() -> None:

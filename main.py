@@ -1,16 +1,38 @@
 import asyncio
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from src.config import DB_PATH, WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES, X_LIST_ID
 from src.db import init_db, upsert_watched_account
 from src.scheduler import build_scheduler, fetch_all_accounts, sync_watched_list
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+_LOG_PATH = str(Path(DB_PATH).parent / "x_database.log")
+_FMT = logging.Formatter(
+    "%(asctime)s  %(levelname)-7s  %(name)-16s  %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%SZ",
 )
+
+def _setup_logging() -> None:
+    Path(_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    fh = RotatingFileHandler(_LOG_PATH, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    fh.setFormatter(_FMT)
+    root.addHandler(fh)
+
+    sh = logging.StreamHandler()
+    sh.setFormatter(_FMT)
+    root.addHandler(sh)
+
+    # 压制噪音 logger
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
+_setup_logging()
 logger = logging.getLogger(__name__)
 
 
