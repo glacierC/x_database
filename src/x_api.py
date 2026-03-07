@@ -271,6 +271,15 @@ def _parse_tweet(result: dict, author_handle: str) -> dict | None:
                 "video_url": video_url,
             })
 
+        # Article detection (S0013)
+        article_node = result.get("article", {}).get("article_results", {}).get("result", {})
+        is_article = 0
+        if article_node:
+            is_article = 1
+            title = article_node.get("title", "")
+            preview = article_node.get("preview_text", "")
+            full_text = f"{title}\n\n{preview}".strip() if (title or preview) else full_text
+
         return {
             "id": tweet_id,
             "author_id": author_id,
@@ -281,6 +290,7 @@ def _parse_tweet(result: dict, author_handle: str) -> dict | None:
             "like_count": like_count,
             "reply_count": reply_count,
             "is_retweet": is_retweet,
+            "is_article": is_article,
             "quoted_tweet_id": quoted_tweet_id,
             "quoted_full_text": quoted_full_text,
             "quoted_author_handle": quoted_author_handle,

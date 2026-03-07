@@ -58,6 +58,15 @@ def init_db() -> None:
                 url         TEXT,
                 video_url   TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS article_content (
+                tweet_id     TEXT PRIMARY KEY,
+                title        TEXT,
+                content      TEXT,
+                fetch_status TEXT DEFAULT 'pending',
+                fetched_at   TEXT,
+                error_msg    TEXT
+            );
         """)
     # Migration: add source column if missing (for existing DBs)
     try:
@@ -65,6 +74,13 @@ def init_db() -> None:
         logger.info("Migration: added 'source' column to watched_accounts")
     except Exception:
         pass  # Column already exists
+    # Migration: add is_article column (S0013)
+    try:
+        conn.execute("ALTER TABLE tweets ADD COLUMN is_article INTEGER DEFAULT 0")
+        logger.info("Migration: added 'is_article' column to tweets")
+    except Exception:
+        pass
+
     # Migration: add quote tweet columns (S0004)
     for col_sql, col_name in [
         ("ALTER TABLE tweets ADD COLUMN quoted_tweet_id TEXT", "quoted_tweet_id"),
@@ -133,10 +149,10 @@ def insert_tweets(tweets: list[dict]) -> int:
                 """
                 INSERT OR IGNORE INTO tweets
                     (id, author_id, author_handle, full_text, created_at,
-                     retweet_count, like_count, reply_count, is_retweet,
+                     retweet_count, like_count, reply_count, is_retweet, is_article,
                      quoted_tweet_id, quoted_full_text, quoted_author_handle,
                      raw_json, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     t["id"],
@@ -148,6 +164,7 @@ def insert_tweets(tweets: list[dict]) -> int:
                     t.get("like_count", 0),
                     t.get("reply_count", 0),
                     t.get("is_retweet", 0),
+                    t.get("is_article", 0),
                     t.get("quoted_tweet_id"),
                     t.get("quoted_full_text"),
                     t.get("quoted_author_handle"),
@@ -430,6 +447,48 @@ def get_quote_tweets(
 
 
 _VALID_METRICS = {"like_count", "retweet_count", "reply_count"}
+
+
+def get_pending_articles(limit: int = 20) -> list[dict]:
+    """Return article tweets whose content hasn't been fetched yet (or failed < 3 times)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.id AS tweet_id, t.author_handle, t.is_article,
+                   ac.fetch_status, ac.error_msg
+            FROM tweets t
+            LEFT JOIN article_content ac ON ac.tweet_id = t.id
+            WHERE t.is_article = 1
+              AND (ac.tweet_id IS NULL OR ac.fetch_status = 'pending')
+            ORDER BY t.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_article_content(
+    tweet_id: str,
+    title: str | None,
+    content: str | None,
+    fetch_status: str,
+    error_msg: str | None = None,
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO article_content (tweet_id, title, content, fetch_status, fetched_at, error_msg)
+            VALUES (?, ?, ?, ?, datetime('now'), ?)
+            ON CONFLICT(tweet_id) DO UPDATE SET
+                title        = excluded.title,
+                content      = excluded.content,
+                fetch_status = excluded.fetch_status,
+                fetched_at   = excluded.fetched_at,
+                error_msg    = excluded.error_msg
+            """,
+            (tweet_id, title, content, fetch_status, error_msg),
+        )
 
 
 def get_top_tweets(

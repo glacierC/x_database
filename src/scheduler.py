@@ -11,6 +11,7 @@ from src.auth import refresh_session
 from src.config import WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES, RAW_JSON_RETENTION_DAYS, X_LIST_ID, FETCH_DELAY_SECONDS
 from src.health import FailureTracker, send_telegram_alert
 from src.exporter import export_all_groups
+from src.jina_fetcher import run_pending_articles
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,14 @@ def build_scheduler() -> AsyncIOScheduler:
         hour=6,
         minute=0,
         id="daily_export",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        run_pending_articles,
+        trigger=IntervalTrigger(minutes=30),
+        id="article_enrichment",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
