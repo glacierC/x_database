@@ -1,5 +1,20 @@
 # Changelog
-# Last Updated: 2026-03-01
+# Last Updated: 2026-03-08
+
+## [1.3.0] - 2026-03-08
+
+### Added (S0015 — 规范化导入 SOP)
+- `import_from_discovery_batch.py` 增强：
+  - `--verbose`：显示 eval_reason + 2 条 sample tweets，辅助导入决策
+  - `--only-new`：交叉查询 watched_accounts，过滤已有账号
+  - `--output-format shell`：输出 `cli.py` 命令序列，用于 VPS 远程导入
+
+### Added (S0014 — Staging 隔离)
+- `import_from_discovery_batch.py`：新建，从 x_discovery YES 账号批量导入
+- `init_db()` 保证 staging group 存在（CREATE OR IGNORE）
+- staging group 隔离：新入库账号进 staging，等待 x_digest eval
+
+---
 
 ## [0.9.0] - 2026-03-01
 

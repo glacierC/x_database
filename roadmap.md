@@ -41,13 +41,20 @@ X 推文定时采集服务。作为独立数据源，供下游分析项目（如
 
 ---
 
-## 当前：v1.2 Article 内容补全
+## ✅ v1.2 Article 内容补全（已完成）
 
 | Story | 描述 | 状态 |
 |-------|------|------|
 | S0013 | Article 推文内容补全：via Jina reader 抓全文，存 article_content 表 | ✅ Done (2026-03-07) |
 
-> v1.1 上线，监听账号 112 个（x_discovery 评估 YES）+ 已有账号，持续运行中。
+## ✅ v1.3 系统治理（已完成）
+
+| Story | 描述 | 状态 |
+|-------|------|------|
+| S0014 | Staging 隔离 + 通用导入脚本：init_db 保证 staging group、xdb_reader group 过滤、import_from_discovery_batch.py | ✅ Done (2026-03-08) |
+| S0015 | 规范化导入 SOP：import 脚本增强（--verbose/--only-new/--output-format shell）+ x_digest 驱动自动 promote | ✅ Done (2026-03-08) |
+
+> v1.3 上线后，新账号走 staging → x_digest 48h 自动 eval → promote/drop 流程，全链路自动化。
 
 ---
 
