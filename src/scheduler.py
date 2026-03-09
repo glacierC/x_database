@@ -34,10 +34,6 @@ async def fetch_account(handle: str) -> bool:
         db.update_last_fetched(handle)
         logger.info("@%s: %d new tweets saved (total fetched: %d)", handle, new_count, len(tweets))
         return True
-    except RateLimitError as e:
-        # 429：跳过本账号，不阻塞 cycle，下一轮自动重试
-        logger.warning("@%s: rate limited (resets in %ds), skipping", handle, e.reset_after)
-        return False
     except Exception as e:
         logger.error("Error fetching @%s: %s", handle, e, exc_info=True)
         return False
@@ -51,7 +47,13 @@ async def fetch_all_accounts() -> None:
     total_new = 0
     failed: list[str] = []
     for i, handle in enumerate(handles):
-        ok = await fetch_account(handle)
+        try:
+            ok = await fetch_account(handle)
+        except RateLimitError as e:
+            # 429 是 session 级限流，sleep 等 reset 后继续剩余账号（不重试当前账号）
+            logger.warning("Rate limit hit at @%s, sleeping %ds before continuing cycle", handle, e.reset_after)
+            await asyncio.sleep(e.reset_after)
+            ok = False
         if not ok:
             failed.append(handle)
         if i < len(handles) - 1:
