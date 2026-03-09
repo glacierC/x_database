@@ -1,5 +1,24 @@
 # Changelog
-# Last Updated: 2026-03-08
+# Last Updated: 2026-03-09
+
+## [1.4.0] - 2026-03-09
+
+### Added (S0016 — Web Dashboard)
+- `src/dashboard.py`：Flask read-only dashboard，端口 8080
+  - Group 概览表（账号数 / 推文 1h / 推文 24h / 最后活跃）
+  - 账号状态表（NEVER 红 / STALE>3h 橙 / OK 绿）
+  - 近 24h 每小时推文 inline bar chart
+  - `<meta http-equiv="refresh" content="60">` 自动刷新
+- `docker-compose.yml`：新增 `dashboard` service（`:ro` 只读挂载 data volume，healthcheck curl）
+- `requirements.txt`：新增 `flask`
+
+### Changed (架构决策 — 采集上限确认)
+- 无头浏览器采集上限确认：~1300 条推文/小时（串行 6s/账号 + 429 封禁窗口）
+- 付费 X API 评估：1000 账号规模需 Enterprise 级（$3,500+/月），不经济
+- **crypto group 清除**：363 个账号从 account_group_members + watched_accounts 删除
+- **staging group 清除**：325 个账号从 account_group_members + watched_accounts 删除
+- 当前监控账号：**212 个**（ai_tech 178 / macro 119 / geopolitics 118 / equities 113 / ai 2）
+- staging → eval → promote 自动化（S0014/S0015）代码保留，**流程暂停执行**
 
 ## [1.3.0] - 2026-03-08
 
