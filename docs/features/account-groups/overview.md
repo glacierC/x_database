@@ -1,5 +1,5 @@
 # 账号管理 + Groups 功能
-# Last Updated: 2026-02-26
+# Last Updated: 2026-03-09
 
 ## 是什么
 
@@ -61,3 +61,17 @@ description                 handle              ──────► handle
 ```
 
 一个账号可同时属于多个 group（多对多）。
+
+---
+
+## 当前生产 Groups
+
+| Group | 说明 |
+|-------|------|
+| ai_tech | AI模型、LLM、科技产品 |
+| macro | 宏观经济、美联储、通胀、GDP |
+| equities | 美股/港股投资、财报、估值 |
+| geopolitics | 地缘政治（影响市场时）|
+| crypto | Crypto/Blockchain 信息源（Top40，来自 x_discovery crypto 批次）|
+
+> **注**：staging group 已停用（2026-03-09）。新账号直接导入目标 group，不再经过缓冲区。

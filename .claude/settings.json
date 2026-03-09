@@ -1,0 +1,11 @@
+{
+  "allowedTools": [
+    "Bash(ssh home-mac*)",
+    "Bash(git *)",
+    "Bash(gh *)",
+    "Bash(~/.orbstack/bin/docker*)",
+    "Bash(lsof -i*)",
+    "Bash(cp *)",
+    "Bash(nano *)"
+  ]
+}
