@@ -34,6 +34,8 @@ async def fetch_account(handle: str) -> bool:
         db.update_last_fetched(handle)
         logger.info("@%s: %d new tweets saved (total fetched: %d)", handle, new_count, len(tweets))
         return True
+    except RateLimitError:
+        raise  # 冒泡到 fetch_all_accounts 统一处理
     except Exception as e:
         logger.error("Error fetching @%s: %s", handle, e, exc_info=True)
         return False
