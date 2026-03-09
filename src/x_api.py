@@ -11,6 +11,13 @@ from src.config import BEARER_TOKEN, INITIAL_MAX_PAGES
 
 logger = logging.getLogger(__name__)
 
+
+class RateLimitError(RuntimeError):
+    """X API 429 rate limit — 跳过本账号，下一轮 cycle 重试。"""
+    def __init__(self, reset_after: int):
+        self.reset_after = reset_after
+        super().__init__(f"Rate limited, resets in {reset_after}s")
+
 # X internal GraphQL query IDs (periodically change; update as needed)
 QUERY_ID_USER_BY_SCREEN_NAME = "NimuplG1OB7Fd2btCLdBOw"
 QUERY_ID_USER_TWEETS = "V7H0Ap3_Hh2FyS75OCDO3Q"
@@ -122,15 +129,11 @@ async def _api_get(url: str, params: dict, retry: bool = True) -> dict:
         await refresh_session()
         return await _api_get(url, params, retry=False)
 
-    if resp.status_code == 429 and retry:
+    if resp.status_code == 429:
         reset_ts = resp.headers.get("x-rate-limit-reset")
-        if reset_ts:
-            wait = max(10, int(reset_ts) - int(time.time()) + 10)
-        else:
-            wait = 60
-        logger.warning("429 rate limited. Sleeping %ds before retry...", wait)
-        await asyncio.sleep(wait)
-        return await _api_get(url, params, retry=False)
+        reset_after = max(10, int(reset_ts) - int(time.time()) + 5) if reset_ts else 60
+        logger.warning("429 rate limited (resets in %ds) — skipping account, next cycle will retry", reset_after)
+        raise RateLimitError(reset_after)
 
     if resp.status_code != 200:
         raise RuntimeError(f"X API error {resp.status_code}: {resp.text[:300]}")

@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src import db
-from src.x_api import get_user_id, get_user_tweets, get_list_members
+from src.x_api import get_user_id, get_user_tweets, get_list_members, RateLimitError
 from src.auth import refresh_session
 from src.config import WATCHED_ACCOUNTS, POLL_INTERVAL_MINUTES, RAW_JSON_RETENTION_DAYS, X_LIST_ID, FETCH_DELAY_SECONDS
 from src.health import FailureTracker, send_telegram_alert
@@ -34,6 +34,10 @@ async def fetch_account(handle: str) -> bool:
         db.update_last_fetched(handle)
         logger.info("@%s: %d new tweets saved (total fetched: %d)", handle, new_count, len(tweets))
         return True
+    except RateLimitError as e:
+        # 429：跳过本账号，不阻塞 cycle，下一轮自动重试
+        logger.warning("@%s: rate limited (resets in %ds), skipping", handle, e.reset_after)
+        return False
     except Exception as e:
         logger.error("Error fetching @%s: %s", handle, e, exc_info=True)
         return False
@@ -62,19 +66,11 @@ async def fetch_all_accounts() -> None:
 
     if failed:
         fail_count = _tracker.record_failure()
-        logger.warning("Poll cycle: %d/%d accounts failed (consecutive cycles: %d). Failed: %s",
-                       len(failed), len(handles), fail_count, failed)
+        logger.warning("Poll cycle: %d/%d accounts failed (consecutive cycles: %d)",
+                       len(failed), len(handles), fail_count)
 
-        # First failure → proactive session refresh
-        if fail_count == 1:
-            logger.info("Triggering proactive session refresh...")
-            try:
-                await refresh_session()
-                logger.info("Proactive refresh done.")
-            except Exception as e:
-                logger.error("Proactive refresh failed: %s", e)
-
-        # Alert threshold reached → send Telegram
+        # Alert threshold reached → send Telegram（不主动触发 Playwright refresh，
+        # 401 时 _api_get 已自动处理，503/429 是服务器问题不是 auth 问题）
         if _tracker.should_alert():
             msg = (
                 f"🚨 <b>x_database alert</b>\n"
