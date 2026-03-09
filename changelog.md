@@ -1,6 +1,23 @@
 # Changelog
 # Last Updated: 2026-03-09
 
+## [1.5.0] - 2026-03-09
+
+### Fixed (断点续抓 + 429 状态持久化)
+
+**问题根因**：`get_watched_accounts()` 无 ORDER BY，容器重启后永远从插入顺序第一个账号（@sama）开始，
+@sama 快速触发 429，后面 200+ 账号长期轮不到。
+
+- `src/db.py`：`get_watched_accounts()` 加 `ORDER BY last_fetched_at ASC NULLS FIRST`
+  - 未抓过的账号（NULL）永远排最前，已抓过的按最旧优先
+  - 重启后自然从上次未完成的账号续跑，无需显式记录位置
+- `src/db.py`：新增 `scraper_state` 表（key/value）+ `get_state()` / `set_state()` 函数
+- `src/scheduler.py`：429 发生时将 `rate_limit_reset_at` 持久化到 `scraper_state`
+  - 正常睡醒后清除；若容器在睡眠中重启，下次 cycle 开始前读取并等待剩余时间
+  - 日志：`[CYCLE] Rate limit carry-over from previous run, sleeping Xs`
+
+---
+
 ## [1.4.0] - 2026-03-09
 
 ### Added (S0016 — Web Dashboard)

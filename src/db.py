@@ -67,6 +67,11 @@ def init_db() -> None:
                 fetched_at   TEXT,
                 error_msg    TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS scraper_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
         """)
     # Migration: add source column if missing (for existing DBs)
     try:
@@ -111,8 +116,29 @@ def upsert_watched_account(handle: str, user_id: str | None = None) -> None:
 
 def get_watched_accounts() -> list[dict]:
     with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM watched_accounts").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM watched_accounts ORDER BY last_fetched_at ASC NULLS FIRST"
+        ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_state(key: str) -> str | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT value FROM scraper_state WHERE key = ?", (key,)
+        ).fetchone()
+    return row["value"] if row else None
+
+
+def set_state(key: str, value: str | None) -> None:
+    with get_conn() as conn:
+        if value is None:
+            conn.execute("DELETE FROM scraper_state WHERE key = ?", (key,))
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO scraper_state (key, value) VALUES (?, ?)",
+                (key, value),
+            )
 
 
 def get_latest_tweet_id(handle: str) -> str | None:

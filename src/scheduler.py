@@ -42,8 +42,17 @@ async def fetch_account(handle: str) -> bool:
 
 
 async def fetch_all_accounts() -> None:
+    # 检查上次 429 的 reset 时间是否还在窗口内（跨重启保持 rate limit 状态）
+    reset_str = db.get_state("rate_limit_reset_at")
+    if reset_str:
+        wait = float(reset_str) - time.time()
+        if wait > 0:
+            logger.info("[CYCLE] Rate limit carry-over from previous run, sleeping %.0fs", wait)
+            await asyncio.sleep(wait)
+        db.set_state("rate_limit_reset_at", None)
+
     t0 = time.monotonic()
-    accounts = db.get_watched_accounts()
+    accounts = db.get_watched_accounts()  # ORDER BY last_fetched_at ASC NULLS FIRST
     handles = [a["handle"] for a in accounts] if accounts else WATCHED_ACCOUNTS
 
     total_new = 0
@@ -52,9 +61,11 @@ async def fetch_all_accounts() -> None:
         try:
             ok = await fetch_account(handle)
         except RateLimitError as e:
-            # 429 是 session 级限流，sleep 等 reset 后继续剩余账号（不重试当前账号）
+            # 429 是 session 级限流，持久化 reset 时间后 sleep，正常醒来后清除
+            db.set_state("rate_limit_reset_at", str(time.time() + e.reset_after))
             logger.warning("Rate limit hit at @%s, sleeping %ds before continuing cycle", handle, e.reset_after)
             await asyncio.sleep(e.reset_after)
+            db.set_state("rate_limit_reset_at", None)
             ok = False
         if not ok:
             failed.append(handle)
