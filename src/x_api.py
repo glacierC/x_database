@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -241,7 +242,13 @@ def _parse_tweet(result: dict, author_handle: str) -> dict | None:
         tweet_id = result.get("rest_id") or result.get("tweet", {}).get("rest_id", "")
         author_id = legacy.get("user_id_str", "")
         full_text = legacy.get("full_text", "")
-        created_at = legacy.get("created_at", "")
+        _raw_created_at = legacy.get("created_at", "")
+        try:
+            created_at = datetime.strptime(
+                _raw_created_at, "%a %b %d %H:%M:%S +0000 %Y"
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, AttributeError):
+            created_at = _raw_created_at  # fallback: keep original if parse fails
         rt_count = legacy.get("retweet_count", 0)
         like_count = legacy.get("favorite_count", 0)
         reply_count = legacy.get("reply_count", 0)
