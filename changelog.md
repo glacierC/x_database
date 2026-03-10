@@ -1,5 +1,19 @@
 # Changelog
-# Last Updated: 2026-03-09
+# Last Updated: 2026-03-10
+
+## [1.6.0] - 2026-03-10
+
+### Fixed (created_at 格式修复 — 下游时间过滤彻底失效)
+
+**问题根因**：`_parse_tweet()` 将 `created_at` 原样存储为 Twitter 原始格式（`'Tue Mar 10 00:19:33 +0000 2026'`）。
+下游（x_digest）使用 SQLite `datetime()` 比较时，`'T'`(84) > `'2'`(50)，所有推文永远"通过"时间过滤。
+实际结果：x_digest 从整库 ~15k 条中取 engagement 最高 500 条，包含近一年前的旧推文。
+
+- `src/x_api.py`：`_parse_tweet()` 新增 `datetime.strptime` 转换，将入库的 `created_at` 统一格式为 `YYYY-MM-DD HH:MM:SS`
+- VPS 一次性迁移：15,135 条存量记录格式已转换（迁移脚本运行于 2026-03-10）
+- 修复后：`WHERE created_at >= datetime('now', '-4 hours')` 正常工作（4h 内推文：264 条，不再是 15120 条）
+
+---
 
 ## [1.5.0] - 2026-03-09
 
