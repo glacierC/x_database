@@ -21,13 +21,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TWITTER_DATE_FMT = "%a %b %d %H:%M:%S +0000 %Y"
+ISO_DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
 
 def parse_created_at(ts: str) -> datetime | None:
-    try:
-        return datetime.strptime(ts, TWITTER_DATE_FMT).replace(tzinfo=timezone.utc)
-    except Exception:
-        return None
+    for fmt in (ISO_DATE_FMT, TWITTER_DATE_FMT):
+        try:
+            return datetime.strptime(ts, fmt).replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError):
+            continue
+    return None
 
 
 async def backfill(handle: str, days: int = 100, max_pages: int = 30) -> None:
